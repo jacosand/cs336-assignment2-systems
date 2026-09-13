@@ -3,6 +3,7 @@ import numpy as np
 import torch
 from dataclasses import dataclass, asdict
 from cs336_basics import model, optimizer, nn_utils
+from cs336_systems.modal_utils import VOLUME_MOUNTS, app, build_image, secrets
 
 
 VOCAB_SIZE = 10_000
@@ -182,3 +183,8 @@ def benchmark(config: BenchmarkConfig) -> dict[str, str | int | float]:
         'device': str(device),
         "device_name": torch.cuda.get_device_name(device) if device.type == "cuda" else str(device),
     }
+
+
+@app.function(image=build_image(), secrets=secrets(), volumes=VOLUME_MOUNTS, gpu="B200", timeout=45*60)
+def benchmark_modal(config: BenchmarkConfig) -> dict[str, str | int | float]:
+    return benchmark(config)

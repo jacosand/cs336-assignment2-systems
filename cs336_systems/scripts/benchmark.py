@@ -1,7 +1,7 @@
 import argparse
 import sys
-from cs336_systems.modal_utils import VOLUME_MOUNTS, app, build_image, secrets
-from cs336_systems.benchmarking import BenchmarkConfig, benchmark
+from cs336_systems.benchmarking import BenchmarkConfig, benchmark_modal
+from cs336_systems.modal_utils import app
 
 
 def parse_args(arglist: tuple[str, ...] | list[str] | None = None) -> BenchmarkConfig:
@@ -36,21 +36,16 @@ def parse_args(arglist: tuple[str, ...] | list[str] | None = None) -> BenchmarkC
     return BenchmarkConfig(**vars(args))
 
 
-@app.function(image=build_image(), secrets=secrets(), volumes=VOLUME_MOUNTS, gpu="B200", timeout=45*60)
-def benchmark_lm(config: BenchmarkConfig) -> dict[str, str | int | float]:
-    return benchmark(config)
-
-
 @app.local_entrypoint()
 def modal_main(*arglist: str) -> None:
     print("Benchmarking LM on Modal")
     config = parse_args(arglist)
-    result = benchmark_lm.remote(config)
+    result = benchmark_modal.remote(config)
     print(result)
 
 
 if __name__ == "__main__":
     print("Benchmarking LM locally")
     config = parse_args(sys.argv[1:])
-    result = benchmark_lm.local(config)
+    result = benchmark_modal.local(config)
     print(result)
