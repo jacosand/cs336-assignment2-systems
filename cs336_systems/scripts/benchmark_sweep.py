@@ -2,13 +2,26 @@ from cs336_systems.modal_utils import app
 from cs336_systems.benchmarking import BenchmarkConfig, benchmark_modal
 import pandas as pd
 
+NUM_WARMUP_STEPS = 5
 
 CONFIGS = [
-    BenchmarkConfig(model_size='small'),
-    BenchmarkConfig(model_size='medium'),
-    BenchmarkConfig(model_size='large'),
-    BenchmarkConfig(model_size='xl'),
-    #BenchmarkConfig(model_size='10B'),
+    BenchmarkConfig(model_size='small', num_warmup_steps = NUM_WARMUP_STEPS),
+    BenchmarkConfig(model_size='medium', num_warmup_steps = NUM_WARMUP_STEPS),
+    BenchmarkConfig(model_size='large', num_warmup_steps = NUM_WARMUP_STEPS),
+    BenchmarkConfig(model_size='xl', num_warmup_steps = NUM_WARMUP_STEPS),
+    BenchmarkConfig(model_size='10B', num_warmup_steps = NUM_WARMUP_STEPS, benchmark_up_to = 'backward'),
+]
+
+RESULTS_COLS = [
+    'model_size',
+    'num_warmup_steps',
+    'num_measurement_steps',
+    'forward_mean_ms',
+    'forward_std_ms',
+    'backward_mean_ms',
+    'backward_std_ms',
+    'optimizer_mean_ms',
+    'optimizer_std_ms',
 ]
 
 
@@ -22,8 +35,7 @@ def modal_main() -> None:
         results.append(result)
 
     df = pd.DataFrame(results)
-    print(df[['model_size', 'num_warmup_steps', 'num_measurement_steps', 'forward_mean', 'forward_std', 'backward_mean', 'backward_std', 'optimizer_mean', 'optimizer_std']].to_markdown())
-
+    print(df[RESULTS_COLS].to_markdown(index=False, floatfmt=".3f"))
 
 
 if __name__ == "__main__":
@@ -35,4 +47,4 @@ if __name__ == "__main__":
         results.append(result)
 
     df = pd.DataFrame(results)
-    print(df[['model_size', 'num_warmup_steps', 'num_measurement_steps', 'forward_mean', 'forward_std', 'backward_mean', 'backward_std', 'optimizer_mean', 'optimizer_std']].to_markdown())
+    print(df[RESULTS_COLS].to_markdown(index=False, floatfmt=".3f"))
