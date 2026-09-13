@@ -1,8 +1,9 @@
 import argparse
 import sys
-import time
+import timeit
 import numpy as np
 import torch
+from dataclasses import dataclass, asdict
 from cs336_basics import model, optimizer, nn_utils
 from cs336_systems.modal_utils import VOLUME_MOUNTS, app, build_image, secrets
 
@@ -10,7 +11,8 @@ from cs336_systems.modal_utils import VOLUME_MOUNTS, app, build_image, secrets
 VOCAB_SIZE = 10_000
 BATCH_SIZE = 4
 CONTEXT_LENGTH = 512
-NUM_ITERATIONS = 10
+NUM_MEASUREMENT_STEPS = 10
+NUM_WARMUP_STEPS = 5
 
 MODEL_CONFIGS = {
     "small": {
@@ -45,35 +47,57 @@ MODEL_CONFIGS = {
     }
 }
 
-def parse_args(arglist: tuple[str, ...] | list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description = "Train a transformer language model")
+
+@dataclass
+class BenchmarkConfig:
+    model_size: str = "small"
+    batch_size: int = BATCH_SIZE
+    vocab_size: int = VOCAB_SIZE
+    context_length: int = CONTEXT_LENGTH
+    num_warmup_steps: int = NUM_WARMUP_STEPS
+    num_measurement_steps: int = NUM_MEASUREMENT_STEPS
+    benchmark_up_to: str = "optimizer"
+
+    rope_theta: float = 10_000
+    beta1: float = 0.9
+    beta2: float = 0.999
+    weight_decay: float = 0.1
+    learning_rate: float = 4e-3
+    max_l2_norm: float = 1.0
+
+    seed: int = 336
+
+
+def parse_args(arglist: tuple[str, ...] | list[str] | None = None) -> BenchmarkConfig:
+    parser = argparse.ArgumentParser(description = "Benchmark a transformer language model")
+
+    defaults = BenchmarkConfig()
 
     # Model arguments
-    parser.add_argument("--model-size", type=str, choices=["small", "medium", "large", "xl", "10B"])
-    parser.add_argument("--vocab-size", type=int, default=VOCAB_SIZE)
-    parser.add_argument("--context-length", type=int, default=CONTEXT_LENGTH)
-    #parser.add_argument("--d-model", type=int, default=512)
-    #parser.add_argument("--num-layers", type=int, default=4)
-    #parser.add_argument("--num-heads", type=int, default=16)
-    #parser.add_argument("--d-ff", type=int, default=1344)
-    parser.add_argument("--rope-theta", type=float, default=10_000)
+    parser.add_argument("--model-size", type=str, choices=["small", "medium", "large", "xl", "10B"], default=defaults.model_size)
+    parser.add_argument("--vocab-size", type=int, default=defaults.vocab_size)
+    parser.add_argument("--context-length", type=int, default=defaults.context_length)
+    parser.add_argument("--rope-theta", type=float, default=defaults.rope_theta)
 
     # Optimizer arguments
-    parser.add_argument("--beta1", type=float, default=0.9)
-    parser.add_argument("--beta2", type=float, default=0.999)
-    parser.add_argument("--weight-decay", type=float, default=0.1)
-    parser.add_argument("--max-learning-rate", type=float, default=4e-3)
-    parser.add_argument("--min-learning-rate", type=float, default=4e-4)
-    parser.add_argument("--warmup-iters", type=int, default=200)
-    parser.add_argument("--cosine-cycle-iters", type=int, default=10_000)
-    parser.add_argument("--max-l2-norm", type=float, default=1.0)
+    parser.add_argument("--beta1", type=float, default=defaults.beta1)
+    parser.add_argument("--beta2", type=float, default=defaults.beta2)
+    parser.add_argument("--weight-decay", type=float, default=defaults.weight_decay)
+    parser.add_argument("--learning-rate", type=float, default=defaults.learning_rate)
+    parser.add_argument("--max-l2-norm", type=float, default=defaults.max_l2_norm)
 
     # Training parameters
-    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
-    parser.add_argument("--num-iterations", type=int, default=NUM_ITERATIONS)
-    parser.add_argument("--seed", type=int, default=336)
+    parser.add_argument("--batch-size", type=int, default=defaults.batch_size)
+    parser.add_argument("--seed", type=int, default=defaults.seed)
 
-    return parser.parse_args(args = arglist)
+    # Benchmarking parameters
+    parser.add_argument("--num-warmup-steps", type=int, default=defaults.num_warmup_steps)
+    parser.add_argument("--num-measurement-steps", type=int, default=defaults.num_measurement_steps)
+    parser.add_argument("--benchmark-up-to", type=str, choices=["forward", "backward", "optimizer"], default=defaults.benchmark_up_to)
+
+    args = parser.parse_args(args = arglist)
+
+    return BenchmarkConfig(**vars(args))
 
 
 def seed_everything(seed: int) -> None:
@@ -81,7 +105,7 @@ def seed_everything(seed: int) -> None:
     torch.manual_seed(seed)
 
 
-def benchmark(args: argparse.Namespace) -> None:
+def benchmark(config: BenchmarkConfig) -> dict[str, str | int | float]:
 
     if torch.cuda.is_available():
         device = torch.device('cuda')
@@ -92,72 +116,125 @@ def benchmark(args: argparse.Namespace) -> None:
     
     print(f"Device: {device}")
 
-    seed_everything(args.seed)
+    seed_everything(config.seed)
 
-    model_size = MODEL_CONFIGS[args.model_size]
+    model_size = MODEL_CONFIGS[config.model_size]
 
     transformer_lm = model.BasicsTransformerLM(
-        vocab_size = args.vocab_size,
-        context_length = args.context_length,
+        vocab_size = config.vocab_size,
+        context_length = config.context_length,
         d_model = model_size['d_model'],
         num_layers = model_size['num_layers'],
         num_heads = model_size['num_heads'],
         d_ff = model_size['d_ff'],
-        rope_theta = args.rope_theta,
+        rope_theta = config.rope_theta,
     ).to(device)
 
     opt = optimizer.AdamW(
         transformer_lm.parameters(),
-        lr = args.max_learning_rate,
-        betas = (args.beta1, args.beta2),
-        weight_decay = args.weight_decay,
+        lr = config.learning_rate,
+        betas = (config.beta1, config.beta2),
+        weight_decay = config.weight_decay,
     )
 
     transformer_lm.train()
 
-    for step in range(1, args.num_iterations + 1):
+    forward_times = []
+    backward_times = []
+    optimizer_times = []
 
-        t0 = time.perf_counter()
-        lr = optimizer.get_cosine_lr(step, args.max_learning_rate, args.min_learning_rate, args.warmup_iters, args.cosine_cycle_iters)
-        for group in opt.param_groups:
-            group["lr"] = lr
-        
-        random_tokens = torch.randint(low=0, high=args.vocab_size, size=(args.batch_size, args.context_length + 1), device=device)
-        x = random_tokens[:,:-1]
-        y = random_tokens[:, 1:]
+    random_tokens = torch.randint(low=0, high=config.vocab_size, size=(config.batch_size, config.context_length + 1), device=device)
+    x = random_tokens[:,:-1]
+    y = random_tokens[:, 1:]
 
-        opt.zero_grad()
-        if device.type == "cuda" and torch.cuda.is_bf16_supported():
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                logits = transformer_lm(x)
-                loss = nn_utils.cross_entropy(logits, y)
-        else:
-            logits = transformer_lm(x)
-            loss = nn_utils.cross_entropy(logits, y)
-        loss.backward()
-        grad_norm = nn_utils.clip_gradient(transformer_lm.parameters(), args.max_l2_norm)
-        opt.step()
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    elif device.type == "mps":
+        torch.mps.synchronize()
+
+    for step in range(1, config.num_warmup_steps + config.num_measurement_steps + 1):
+
+        t0 = timeit.default_timer()
+
+        logits = transformer_lm(x)
+        loss = nn_utils.cross_entropy(logits, y)
+
         if device.type == "cuda":
             torch.cuda.synchronize()
         elif device.type == "mps":
             torch.mps.synchronize()
 
-        dt = time.perf_counter() - t0
-        print(dt)
+        t1 = timeit.default_timer()
+
+        if step > config.num_warmup_steps:
+            forward_times.append(t1-t0)
+
+        if config.benchmark_up_to != "forward":
+
+            t0 = timeit.default_timer()
+
+            loss.backward()
+
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            elif device.type == "mps":
+                torch.mps.synchronize()
+
+            t1 = timeit.default_timer()
+
+            if step > config.num_warmup_steps:
+                backward_times.append(t1-t0)
+
+        if config.benchmark_up_to == "optimizer":
+
+            t0 = timeit.default_timer()
+
+            nn_utils.clip_gradient(transformer_lm.parameters(), config.max_l2_norm)
+            opt.step()
+
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            elif device.type == "mps":
+                torch.mps.synchronize()
+
+            t1 = timeit.default_timer()
+
+            if step > config.num_warmup_steps:
+                optimizer_times.append(t1-t0)
+
+        if config.benchmark_up_to != "forward":
+            opt.zero_grad(set_to_none=True)
+
+    return {
+        **asdict(config),
+        'd_model': model_size['d_model'],
+        'num_layers': model_size['num_layers'],
+        'num_heads': model_size['num_heads'],
+        'd_ff': model_size['d_ff'],
+        'forward_mean': float(np.mean(forward_times)),
+        'forward_std': float(np.std(forward_times)),
+        'backward_mean': float(np.mean(backward_times)) if backward_times else np.nan,
+        'backward_std': float(np.std(backward_times)) if backward_times else np.nan,
+        'optimizer_mean': float(np.mean(optimizer_times)) if optimizer_times else np.nan,
+        'optimizer_std': float(np.std(optimizer_times)) if optimizer_times else np.nan,
+        'device': str(device),
+    }
 
 
 @app.function(image=build_image(), secrets=secrets(), volumes=VOLUME_MOUNTS, gpu="B200", timeout=45*60)
-def benchmark_lm(*arglist: str) -> None:
-    args = parse_args(arglist)
-    benchmark(args)
+def benchmark_lm(*arglist: str) -> dict[str, str | int | float]:
+    config = parse_args(arglist)
+    return benchmark(config)
 
 
 @app.local_entrypoint()
 def modal_main(*arglist: str) -> None:
     print("Benchmarking LM on Modal")
-    benchmark_lm.remote(*arglist)
+    result = benchmark_lm.remote(*arglist)
+    print(result)
 
 
 if __name__ == "__main__":
     print("Benchmarking LM locally")
-    benchmark_lm.local(*sys.argv[1:])
+    result = benchmark_lm.local(*sys.argv[1:])
+    print(result)
