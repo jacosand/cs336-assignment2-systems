@@ -199,6 +199,8 @@ def benchmark(config: BenchmarkConfig) -> dict[str, str | int | float]:
 
         if config.benchmark_up_to != "forward":
             opt.zero_grad(set_to_none=True)
+        else:
+            del loss, logits
 
     return {
         **asdict(config),
@@ -232,6 +234,6 @@ def modal_main(*arglist: str) -> None:
 
 if __name__ == "__main__":
     print("Benchmarking LM locally")
-    config = parse_args(*sys.argv[1:])
+    config = parse_args(sys.argv[1:])
     result = benchmark_lm.local(config)
     print(result)
