@@ -8,24 +8,21 @@ dependencies = [
     "cs336-basics",
     "humanfriendly",
     "matplotlib",
-
     # Compatibility with older MacOS and newer Linux on Modal
     "numpy>=1.26,<2; sys_platform == 'darwin'",
     "numpy>=2.4; sys_platform == 'linux'",
-
     "pytest>=8",
     "regex>=2026.3.32",
-
     # Compatibility with older MacOS and newer Linux on Modal
     "torch==2.2.2; sys_platform == 'darwin'",
     "torch~=2.11.0; sys_platform == 'linux'",
-
     "tqdm>=4.67.1",
     "wandb>=0.19.7",
     "pandas>=2",
     "ty>=0.0.29",
     "ruff>=0.15.10",
     "modal>=1.5.2",
+    "tabulate>=0.10.0",
 ]
 
 [build-system]
