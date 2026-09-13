@@ -105,6 +105,13 @@ def seed_everything(seed: int) -> None:
     torch.manual_seed(seed)
 
 
+def synchronize(device: torch.device) -> None:
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    elif device.type == "mps":
+        torch.mps.synchronize()
+
+
 def benchmark(config: BenchmarkConfig) -> dict[str, str | int | float]:
 
     if torch.cuda.is_available():
@@ -147,26 +154,20 @@ def benchmark(config: BenchmarkConfig) -> dict[str, str | int | float]:
     x = random_tokens[:,:-1]
     y = random_tokens[:, 1:]
 
-    if device.type == "cuda":
-        torch.cuda.synchronize()
-    elif device.type == "mps":
-        torch.mps.synchronize()
+    synchronize(device)
 
-    for step in range(1, config.num_warmup_steps + config.num_measurement_steps + 1):
+    for step in range(config.num_warmup_steps + config.num_measurement_steps):
 
         t0 = timeit.default_timer()
 
         logits = transformer_lm(x)
         loss = nn_utils.cross_entropy(logits, y)
 
-        if device.type == "cuda":
-            torch.cuda.synchronize()
-        elif device.type == "mps":
-            torch.mps.synchronize()
+        synchronize(device)
 
         t1 = timeit.default_timer()
 
-        if step > config.num_warmup_steps:
+        if step >= config.num_warmup_steps:
             forward_times.append(t1-t0)
 
         if config.benchmark_up_to != "forward":
@@ -175,14 +176,11 @@ def benchmark(config: BenchmarkConfig) -> dict[str, str | int | float]:
 
             loss.backward()
 
-            if device.type == "cuda":
-                torch.cuda.synchronize()
-            elif device.type == "mps":
-                torch.mps.synchronize()
+            synchronize(device)
 
             t1 = timeit.default_timer()
 
-            if step > config.num_warmup_steps:
+            if step >= config.num_warmup_steps:
                 backward_times.append(t1-t0)
 
         if config.benchmark_up_to == "optimizer":
@@ -192,14 +190,11 @@ def benchmark(config: BenchmarkConfig) -> dict[str, str | int | float]:
             nn_utils.clip_gradient(transformer_lm.parameters(), config.max_l2_norm)
             opt.step()
 
-            if device.type == "cuda":
-                torch.cuda.synchronize()
-            elif device.type == "mps":
-                torch.mps.synchronize()
+            synchronize(device)
 
             t1 = timeit.default_timer()
 
-            if step > config.num_warmup_steps:
+            if step >= config.num_warmup_steps:
                 optimizer_times.append(t1-t0)
 
         if config.benchmark_up_to != "forward":
@@ -218,23 +213,25 @@ def benchmark(config: BenchmarkConfig) -> dict[str, str | int | float]:
         'optimizer_mean': float(np.mean(optimizer_times)) if optimizer_times else np.nan,
         'optimizer_std': float(np.std(optimizer_times)) if optimizer_times else np.nan,
         'device': str(device),
+        "device_name": torch.cuda.get_device_name(device) if device.type == "cuda" else str(device),
     }
 
 
 @app.function(image=build_image(), secrets=secrets(), volumes=VOLUME_MOUNTS, gpu="B200", timeout=45*60)
-def benchmark_lm(*arglist: str) -> dict[str, str | int | float]:
-    config = parse_args(arglist)
+def benchmark_lm(config: BenchmarkConfig) -> dict[str, str | int | float]:
     return benchmark(config)
 
 
 @app.local_entrypoint()
 def modal_main(*arglist: str) -> None:
     print("Benchmarking LM on Modal")
-    result = benchmark_lm.remote(*arglist)
+    config = parse_args(arglist)
+    result = benchmark_lm.remote(config)
     print(result)
 
 
 if __name__ == "__main__":
     print("Benchmarking LM locally")
-    result = benchmark_lm.local(*sys.argv[1:])
+    config = parse_args(*sys.argv[1:])
+    result = benchmark_lm.local(config)
     print(result)
