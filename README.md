@@ -107,3 +107,82 @@ With one warm-up step, the requested timings are as follows:
 | 10B          |              1 |                  10 |   945.603 ± 0.270 |   1871.444 ± 0.870 |            OOM     |
 
 Some of the standard deviations, particularly for the `small` and `medium` model forward passes, are still higher than with five warm-up steps, though the huge initial cold-start cost is no longer present.  It is possible that CUDA, kernel, and module caches are not fully established after a single step, so there is still a small warm-up cost for the earlier measurement steps compared to the later measurement steps.
+
+### `nys_profile`
+
+#### (a) What is the total time spent on your forward pass? Does it match what we had measured before with the Python standard library?
+
+| model_size | context_length | forward_ms |
+|:-----------|---------------:|-----------:|
+| small      |  256           |  26.338    |
+| small      |  512           |  23.792    |
+| small      | 1024           |  38.779    |
+| xl         |  256           | 158.757    |
+| xl         |  512           | 297.804    |
+| xl         | 1024           | 587.743    |
+
+For the `xl` model, the timing for `context_length = 512` is quite close, but for the `small` model, the timing here is longer, likely because of the overhead of running the profiler itself.
+
+#### (b) What CUDA kernel takes the most cumulative GPU time during the forward pass? How many times is this kernel invoked during a single forward pass of your model? Is it the same kernel that takes the most runtime when you do both forward and backward passes?
+
+For the forward pass, we have:
+
+| model_size | context_length | longest_kernel                                                                               | times_invoked |
+|:-----------|---------------:|---------------------------------------------------------------------------------------------:|--------------:|
+| small      |  256           | `cutlass3x_sm100_simt_sgemm_f32_f32_f32_f32_f32_64x64x16_1x1x1_3_tnn_align1_bias_f32_relu`   |  24           |
+| small      |  512           | `cutlass3x_sm100_simt_sgemm_f32_f32_f32_f32_f32_64x128x16_1x1x1_3_tnn_align1_bias_f32_relu`  |  25           |
+| small      | 1024           | `cutlass3x_sm100_simt_sgemm_f32_f32_f32_f32_f32_64x64x16_1x1x1_3_tnn_align1_bias_f32_relu`   |  60           |
+| xl         |  256           | `cutlass3x_sm100_simt_sgemm_f32_f32_f32_f32_f32_128x64x16_1x1x1_3_tnn_align1_bias_f32_relu`  |  97           |
+| xl         |  512           | `cutlass3x_sm100_simt_sgemm_f32_f32_f32_f32_f32_128x128x16_1x1x1_3_tnn_align1_bias_f32_relu` |  65           |
+| xl         | 1024           | `cutlass3x_sm100_simt_sgemm_f32_f32_f32_f32_f32_128x64x16_1x1x1_3_tnn_align1_bias_f32_relu`  | 160           |
+
+For the forward and backward pass, we have:
+
+| model_size | context_length | longest_kernel                                                                               | times_invoked |
+|:-----------|---------------:|---------------------------------------------------------------------------------------------:|--------------:|
+| small      |  256           | `cutlass3x_sm100_simt_sgemm_f32_f32_f32_f32_f32_128x64x16_1x1x1_3_nnn_align1_bias_f32_relu`  |  72           |
+| small      |  512           | `cutlass3x_sm100_simt_sgemm_f32_f32_f32_f32_f32_64x64x16_1x1x1_3_nnn_align1_bias_f32_relu`   | 109           |
+| small      | 1024           | `cutlass3x_sm100_simt_sgemm_f32_f32_f32_f32_f32_64x64x16_1x1x1_3_nnn_align1_bias_f32_relu`   |  73           |
+| xl         |  256           | `cutlass3x_sm100_simt_sgemm_f32_f32_f32_f32_f32_128x128x16_1x1x1_3_ntn_align1_bias_f32_relu` |  97           |
+| xl         |  512           | `cutlass3x_sm100_simt_sgemm_f32_f32_f32_f32_f32_64x64x16_1x1x1_3_nnn_align1_bias_f32_relu`   | 193           |
+| xl         | 1024           | `cutlass3x_sm100_simt_sgemm_f32_f32_f32_f32_f32_128x64x16_1x1x1_3_nnn_align1_bias_f32_relu`  | 193           |
+
+All of these are matrix multiplication kernels, but they are for matrices of different sizes.  For some model sizes and context lengths, the kernel that takes the most GPU time for forward-only and forward-and-backward passes are the same, but for others, the kernel is different.
+
+#### (c) Although the vast majority of FLOPs take place in matrix multiplications, you will notice that several other kernels still take a non-trivial amount of the overall runtime. What other kernels besides matrix multiplies do you see accounting for non-trivial CUDA runtime in the forward pass?
+
+Some other kernels besides matrix multiplies that account for non-trivial CUDA runtime in the forward pass are:
+
+- `void at::native::elementwise_kernel<(int)128, (int)2, void at::native::gpu_kernel_impl_nocast<at::native::BinaryFunctor<float, float, float, at::native::binary_internal::DivFunctor<float>>>(at::TensorIteratorBase &, const T1 &)::[lambda(int) (instance 1)]>(int, T3)`
+- `void at::native::elementwise_kernel<(int)128, (int)2, void at::native::gpu_kernel_impl_nocast<at::native::<unnamed>::where_kernel_impl(at::TensorIterator &)::[lambda() (instance 1)]::operator ()() const::[lambda() (instance 11)]::operator ()() const::[lambda(bool, float, float) (instance 1)]>(at::TensorIteratorBase &, const T1 &)::[lambda(int) (instance 1)]>(int, T3)`
+- `void at::native::elementwise_kernel<(int)128, (int)2, void at::native::gpu_kernel_impl_nocast<at::native::CUDAFunctor_add<float>>(at::TensorIteratorBase &, const T1 &)::[lambda(int) (instance 1)]>(int, T3)`
+
+These are elementwise operations: the first is for elementwise divsion, the second is for `torch.where` used in masking, and the third is for elementwise addition.  These elementwise kernels account for a larger percentage of the runtime in the `small` model compared to the `xl` model.
+
+#### (d) Profile running one complete training step with your implementation of AdamW (i.e., the forward pass, computing the loss and running a backward pass, and finally an optimizer step, as you'd do during training). How does the fraction of time spent on matrix multiplication change, compared to doing inference (forward pass only)? How about other kernels?
+
+For the forward pass, we have:
+
+| model_size | context_length | matrix_multiplication_fraction |
+|:-----------|---------------:|-------------------------------:|
+| small      |  256           |  0.772                         |
+| small      |  512           |  0.759                         |
+| small      | 1024           |  0.689                         |
+| xl         |  256           |  0.930                         |
+| xl         |  512           |  0.906                         |
+| xl         | 1024           |  0.862                         |
+
+For the full training step, we have:
+
+| model_size | context_length | matrix_multiplication_fraction |
+|:-----------|---------------:|-------------------------------:|
+| small      |  256           |  0.581                         |
+| small      |  512           |  0.642                         |
+| small      | 1024           |  0.629                         |
+| xl         |  256           |  0.744                         |
+| xl         |  512           |  0.803                         |
+| xl         | 1024           |  0.812                         |
+
+The fraction of time spent on matrix multiplication decreases for the full training step compared to the forward pass, at least in part because the AdamW optimization step consists almost entirely of elementwise operations.  Note also that the fraction of matrix multiplication is higher for a larger model size.
+
+#### (e) Compare the runtime of the softmax operation versus the matrix multiplication operations within the self-attention layer of your model during a forward pass. How does the difference in runtimes compare to the difference in FLOPs?
