@@ -4,6 +4,8 @@ import torch
 from dataclasses import dataclass, asdict
 from cs336_basics import model, optimizer, nn_utils
 from cs336_systems.modal_utils import VOLUME_MOUNTS, app, build_image, secrets
+from contextlib import nullcontext
+import torch.cuda.nvtx as nvtx
 
 
 VOCAB_SIZE = 10_000
@@ -122,7 +124,10 @@ def benchmark(config: BenchmarkConfig) -> dict[str, str | int | float]:
 
     synchronize(device)
 
-    for step in range(config.num_warmup_steps + config.num_measurement_steps):
+    def run_step() -> tuple[float, float | None, float | None]:
+
+        backward_time = None
+        optimizer_time = None
 
         t0 = timeit.default_timer()
 
@@ -132,9 +137,7 @@ def benchmark(config: BenchmarkConfig) -> dict[str, str | int | float]:
         synchronize(device)
 
         t1 = timeit.default_timer()
-
-        if step >= config.num_warmup_steps:
-            forward_times.append(t1-t0)
+        forward_time = t1-t0
 
         if config.benchmark_up_to != "forward":
 
@@ -145,9 +148,7 @@ def benchmark(config: BenchmarkConfig) -> dict[str, str | int | float]:
             synchronize(device)
 
             t1 = timeit.default_timer()
-
-            if step >= config.num_warmup_steps:
-                backward_times.append(t1-t0)
+            backward_time = t1-t0
 
         if config.benchmark_up_to == "optimizer":
 
@@ -159,14 +160,27 @@ def benchmark(config: BenchmarkConfig) -> dict[str, str | int | float]:
             synchronize(device)
 
             t1 = timeit.default_timer()
-
-            if step >= config.num_warmup_steps:
-                optimizer_times.append(t1-t0)
+            optimizer_time = t1-t0
 
         if config.benchmark_up_to != "forward":
             opt.zero_grad(set_to_none=True)
-        else:
-            del loss, logits
+
+        return forward_time, backward_time, optimizer_time
+
+    for step in range(config.num_warmup_steps):
+        run_step()
+
+    measurement_range = nvtx.range("measurement") if device.type=="cuda" else nullcontext()
+
+    with measurement_range:
+        for step in range(config.num_measurement_steps):
+            forward_time, backward_time, optimizer_time = run_step()
+
+            forward_times.append(forward_time)
+            if config.benchmark_up_to != "forward":
+                backward_times.append(backward_time)
+            if config.benchmark_up_to == "optimizer":
+                optimizer_times.append(optimizer_time)
 
     return {
         **asdict(config),

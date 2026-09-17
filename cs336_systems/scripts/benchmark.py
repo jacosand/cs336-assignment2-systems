@@ -1,6 +1,6 @@
 import argparse
 import sys
-from cs336_systems.benchmarking import BenchmarkConfig, benchmark_modal
+from cs336_systems.benchmarking import BenchmarkConfig, benchmark_modal, benchmark
 from cs336_systems.modal_utils import app
 
 
@@ -45,7 +45,7 @@ def modal_main(*arglist: str) -> None:
 
 
 if __name__ == "__main__":
-    print("Benchmarking LM locally")
+    print("Benchmarking LM")
     config = parse_args(sys.argv[1:])
-    result = benchmark_modal.local(config)
+    result = benchmark(config)
     print(result)

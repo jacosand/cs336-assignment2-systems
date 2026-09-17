@@ -1,5 +1,5 @@
 from cs336_systems.modal_utils import app
-from cs336_systems.benchmarking import BenchmarkConfig, benchmark_modal
+from cs336_systems.benchmarking import BenchmarkConfig, benchmark_modal, benchmark
 import pandas as pd
 
 NUM_WARMUP_STEPS = 5
@@ -39,11 +39,11 @@ def modal_main() -> None:
 
 
 if __name__ == "__main__":
-    print("Performing benchmarking sweep locally")
+    print("Performing benchmarking sweep")
 
     results = []
     for config in CONFIGS:
-        result = benchmark_modal.local(config)
+        result = benchmark(config)
         results.append(result)
 
     df = pd.DataFrame(results)
