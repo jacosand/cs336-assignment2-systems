@@ -186,3 +186,18 @@ For the full training step, we have:
 The fraction of time spent on matrix multiplication decreases for the full training step compared to the forward pass, at least in part because the AdamW optimization step consists almost entirely of elementwise operations.  Note also that the fraction of matrix multiplication is higher for a larger model size.
 
 #### (e) Compare the runtime of the softmax operation versus the matrix multiplication operations within the self-attention layer of your model during a forward pass. How does the difference in runtimes compare to the difference in FLOPs?
+
+We have:
+
+| model_size | context_length | matrix_multiplication_mean_µs | softmax_mean_µs |
+|:-----------|---------------:|------------------------------:|----------------:|
+| small      |  256           |    72.828                     |   80.900        |
+| small      |  512           |   131.359                     |  133.680        |
+| small      | 1024           |   428.450                     |  479.059        |
+| xl         |  256           |   108.286                     |   94.778        |
+| xl         |  512           |   361.932                     |  340.982        |
+| xl         | 1024           |  1303.744                     | 1254            |
+
+The runtimes are comparable for matrix multiplication and softmax, but the number of operations in each layer for matrix multiplication is about `4 * context_length * context_length * d_model` while the number of operations in each layer for softmax is about `5 * context_length * context_length * num_heads`.  Thus, the ratio of FLOPS for matrix multiplication to FLOPs for softmax is `4 * d_model / (5 * num_heads)` which is much greater than 1.  (For the `small` model the ratio is about 51.2 and for the `xl` model the ratio is about 64.)
+
+The reason for comparable runtimes despite many more matrix multiplication FLOPs is that matrix multiplication has much higher arithmetic intensity through data reuse; thus it is much more efficient on the GPU.  Softmax is less efficient, involving the launching of many different kernels and more frequent reading and writing from memory.
