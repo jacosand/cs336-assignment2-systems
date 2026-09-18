@@ -4,8 +4,13 @@ import torch
 from dataclasses import dataclass, asdict
 from cs336_basics import model, optimizer, nn_utils
 from cs336_systems.modal_utils import VOLUME_MOUNTS, app, build_image, secrets
-from contextlib import nullcontext
 import torch.cuda.nvtx as nvtx
+import math
+from einops import einsum
+from jaxtyping import Bool, Float
+from torch import Tensor
+
+from cs336_basics.nn_utils import softmax
 
 
 VOCAB_SIZE = 10_000
@@ -80,7 +85,34 @@ def synchronize(device: torch.device) -> None:
         torch.mps.synchronize()
 
 
+@nvtx.range("scaled dot product attention")
+def annotated_scaled_dot_product_attention(
+    Q: Float[Tensor, " ... queries d_k"],
+    K: Float[Tensor, " ... keys    d_k"],
+    V: Float[Tensor, " ... keys    d_v"],
+    mask: Bool[Tensor, " ... queries keys"] | None = None,
+) -> Float[Tensor, " ... queries d_v"]:
+
+    with nvtx.range("computing attention scores"):
+        d_k = K.shape[-1]
+        attention_scores = einsum(Q, K, "... query d_k, ... key d_k -> ... query key") / math.sqrt(d_k)
+
+    with nvtx.range("applying mask"):
+        if mask is not None:
+            attention_scores = torch.where(mask, attention_scores, float("-inf"))
+
+    with nvtx.range("computing softmax"):
+        attention_weights = softmax(attention_scores, dim=-1)  # Softmax over the key dimension
+
+    with nvtx.range("final matmul"):
+        result = einsum(attention_weights, V, "... query key, ... key d_v ->  ... query d_v")
+
+    return result
+
+
 def benchmark(config: BenchmarkConfig) -> dict[str, str | int | float]:
+
+    model.scaled_dot_product_attention = annotated_scaled_dot_product_attention
 
     if torch.cuda.is_available():
         device = torch.device('cuda')
@@ -170,9 +202,7 @@ def benchmark(config: BenchmarkConfig) -> dict[str, str | int | float]:
     for step in range(config.num_warmup_steps):
         run_step()
 
-    measurement_range = nvtx.range("measurement") if device.type=="cuda" else nullcontext()
-
-    with measurement_range:
+    with nvtx.range("measurement"):
         for step in range(config.num_measurement_steps):
             forward_time, backward_time, optimizer_time = run_step()
 
