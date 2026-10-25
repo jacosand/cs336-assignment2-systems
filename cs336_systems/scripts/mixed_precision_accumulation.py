@@ -1,5 +1,6 @@
 import torch
 
+
 def main():
     s = torch.tensor(0,dtype=torch.float32)
     for i in range(1000):

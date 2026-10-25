@@ -230,3 +230,37 @@ The reason for comparable runtimes despite many more matrix multiplication FLOPs
 With infinite precision, the correct answer would be `10`.  The first block of code in FP32 gives `10.0001`, which is quite accurate.  The second block of code in FP16 gives `9.9531`, which is a significant loss in accuracy.  The third and fourth blocks of code evaluate 0.01 in FP16 but accumulate in FP32, and both yield an answer of `10.0021`, which is much closer to the correct answer and to the answer obtained fully using FP32.
 
 This is because although there is some error in evaluating `0.01` in FP16 (the value is actually `0.01000213623046875`), there is no additional error introduced in accumulation when the accumulation is done in FP32.  In contrast, accumulating in FP16 causes rounding error at every step of the accumulation.
+
+### `benchmarking_mixed_precision`
+#### (a) Consider the following model:
+```
+class ToyModel(nn.Module):
+    def __init__(self, in_features: int, out_features: int):
+        super().__init__()
+        self.fc1 = nn.Linear(in_features, 10, bias=False)
+        self.ln = nn.LayerNorm(10)
+        self.fc2 = nn.Linear(10, out_features, bias=False)
+        self.relu = nn.ReLU()
+    def forward(self, x):
+        x = self.relu(self.fc1(x))
+        x = self.ln(x)
+        x = self.fc2(x)
+        return x
+```
+Suppose we are training the model on a GPU and that the model parameters are originally in 
+FP32.  We'd like to use autocasting mixed precision with FP16.  What are the data types of:
+- the model parameters within the autocast context? `torch.float32`
+- the output of the first feed-forward layer (`ToyModel.fc1`)? `torch.float16`
+- the output of layer norm (`ToyModel.ln`)? `torch.float32`
+- the model's predicted logits? `torch.float16`
+- the loss? `torch.float32`
+- the model's gradients? `torch.float32`
+
+#### (b) You should have seen that FP16 mixed precision autocasting treats the layer normalization layer differently than the feed-forward layers.  What parts of layer normalization are sensitive to mixed precision?  If we use BF16 instead of FP16, do we still need to treat layer normalization differently?  Why or why not?
+
+Using FP16 mixed precision treats layer normalization using FP32 because normalizing the activations within a layer involves calculating a mean and standard deviation, which in turn involves accumulating the activations or the squared activations.  These accumulations are sensitive to rounding error and need to be done in FP32.  Squaring large activations could also overflow in FP16.
+
+If we use BF16 instead of FP16, the layer normalization would still need to be done in FP32 because BF16 has the same _range_ as FP32 but a much lower _precision_ than FP32 (and even than FP16).  So BF16 would address the range problem with squaring large activations, but not the precision problems with rounding error in accumulations.  Thus, layer normalization should still be done in FP32.
+
+#### (c) Modify your benchmarking script to optionally run the model using mixed precision with BF16. Time the forward and backward passes with and without mixed-precision for each language model size described in Section 2.1.2. Compare the results of using full precision versus mixed precision, and comment on any trends as model size changes. You may find the nullcontext no-op context manager to be useful.
+
