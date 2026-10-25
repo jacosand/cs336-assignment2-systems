@@ -9,6 +9,7 @@ import math
 from einops import einsum
 from jaxtyping import Bool, Float
 from torch import Tensor
+from contextlib import nullcontext
 
 from cs336_basics.nn_utils import softmax
 
@@ -62,6 +63,8 @@ class BenchmarkConfig:
     num_warmup_steps: int = NUM_WARMUP_STEPS
     num_measurement_steps: int = NUM_MEASUREMENT_STEPS
     benchmark_up_to: str = "optimizer"
+    nsys_profile: str = "no"
+    mixed_precision: str = "no"
 
     rope_theta: float = 10_000
     beta1: float = 0.9
@@ -112,7 +115,16 @@ def annotated_scaled_dot_product_attention(
 
 def benchmark(config: BenchmarkConfig) -> dict[str, str | int | float]:
 
-    model.scaled_dot_product_attention = annotated_scaled_dot_product_attention
+    if config.nsys_profile == 'yes':
+        model.scaled_dot_product_attention = annotated_scaled_dot_product_attention
+        measurement_context_manager = nvtx.range("measurement")
+    else:
+        measurement_context_manager = nullcontext()
+
+    if config.mixed_precision == 'yes':
+        autocast_context_manager = torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    else:
+        autocast_context_manager = nullcontext()
 
     if torch.cuda.is_available():
         device = torch.device('cuda')
@@ -163,8 +175,9 @@ def benchmark(config: BenchmarkConfig) -> dict[str, str | int | float]:
 
         t0 = timeit.default_timer()
 
-        logits = transformer_lm(x)
-        loss = nn_utils.cross_entropy(logits, y)
+        with autocast_context_manager:
+            logits = transformer_lm(x)
+            loss = nn_utils.cross_entropy(logits, y)
 
         synchronize(device)
 
@@ -202,7 +215,7 @@ def benchmark(config: BenchmarkConfig) -> dict[str, str | int | float]:
     for step in range(config.num_warmup_steps):
         run_step()
 
-    with nvtx.range("measurement"):
+    with measurement_context_manager:
         for step in range(config.num_measurement_steps):
             forward_time, backward_time, optimizer_time = run_step()
 

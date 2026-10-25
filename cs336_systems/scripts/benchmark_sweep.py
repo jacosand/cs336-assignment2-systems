@@ -5,15 +5,21 @@ import pandas as pd
 NUM_WARMUP_STEPS = 5
 
 CONFIGS = [
-    BenchmarkConfig(model_size='small', num_warmup_steps = NUM_WARMUP_STEPS),
-    BenchmarkConfig(model_size='medium', num_warmup_steps = NUM_WARMUP_STEPS),
-    BenchmarkConfig(model_size='large', num_warmup_steps = NUM_WARMUP_STEPS),
-    BenchmarkConfig(model_size='xl', num_warmup_steps = NUM_WARMUP_STEPS),
-    BenchmarkConfig(model_size='10B', num_warmup_steps = NUM_WARMUP_STEPS, benchmark_up_to = 'backward'),
+    BenchmarkConfig(model_size='small', mixed_precision='no', num_warmup_steps = NUM_WARMUP_STEPS),
+    BenchmarkConfig(model_size='medium', mixed_precision='no', num_warmup_steps = NUM_WARMUP_STEPS),
+    BenchmarkConfig(model_size='large', mixed_precision='no', num_warmup_steps = NUM_WARMUP_STEPS),
+    BenchmarkConfig(model_size='xl', mixed_precision='no', num_warmup_steps = NUM_WARMUP_STEPS),
+    BenchmarkConfig(model_size='10B', mixed_precision='no', num_warmup_steps = NUM_WARMUP_STEPS, benchmark_up_to = 'backward'),
+    BenchmarkConfig(model_size='small', mixed_precision='yes', num_warmup_steps = NUM_WARMUP_STEPS),
+    BenchmarkConfig(model_size='medium', mixed_precision='yes', num_warmup_steps = NUM_WARMUP_STEPS),
+    BenchmarkConfig(model_size='large', mixed_precision='yes', num_warmup_steps = NUM_WARMUP_STEPS),
+    BenchmarkConfig(model_size='xl', mixed_precision='yes', num_warmup_steps = NUM_WARMUP_STEPS),
+    BenchmarkConfig(model_size='10B', mixed_precision='yes', num_warmup_steps = NUM_WARMUP_STEPS, benchmark_up_to = 'backward'),
 ]
 
 RESULTS_COLS = [
     'model_size',
+    'mixed_precision',
     'num_warmup_steps',
     'num_measurement_steps',
     'forward_mean_ms',

@@ -264,3 +264,20 @@ If we use BF16 instead of FP16, the layer normalization would still need to be d
 
 #### (c) Modify your benchmarking script to optionally run the model using mixed precision with BF16. Time the forward and backward passes with and without mixed-precision for each language model size described in Section 2.1.2. Compare the results of using full precision versus mixed precision, and comment on any trends as model size changes. You may find the nullcontext no-op context manager to be useful.
 
+The requested timings are as follows:
+
+| model_size   | mixed_precision   |   warmup_steps |   measurement_steps |        forward_ms |        backward_ms |      optimizer_ms |
+|:-------------|:------------------|---------------:|--------------------:|------------------:|-------------------:|------------------:|
+| small        | no                |              5 |                  10 |    15.828 ± 0.104 |     30.287 ± 0.170 |     8.752 ± 0.497 |
+| small        | yes               |              5 |                  10 |     7.536 ± 0.340 |     12.149 ± 1.254 |     8.508 ± 0.264 |
+| medium       | no                |              5 |                  10 |    45.867 ± 0.102 |     88.833 ± 0.087 |    17.337 ± 0.716 |
+| medium       | yes               |              5 |                  10 |    15.167 ± 0.330 |     28.610 ± 0.091 |    16.828 ± 0.366 |
+| large        | no                |              5 |                  10 |   103.928 ± 0.144 |    202.709 ± 0.591 |    31.075 ± 0.831 |
+| large        | yes               |              5 |                  10 |    27.390 ± 0.162 |     53.901 ± 0.324 |    30.840 ± 0.745 |
+| xl           | no                |              5 |                  10 |   290.641 ± 0.294 |    565.041 ± 0.790 |    92.162 ± 0.083 |
+| xl           | yes               |              5 |                  10 |    45.460 ± 0.110 |    103.388 ± 1.016 |    92.421 ± 0.314 |
+| 10B          | no                |              5 |                  10 |   940.167 ± 0.182 |   1860.255 ± 0.730 |               OOM |
+| 10B          | yes               |              5 |                  10 |   110.251 ± 0.421 |    274.890 ± 1.205 |               OOM |
+
+Using mixed precision yields faster forward and backward passes compared to using full precision, and the speedup increases as the model size increases.  In all cases, the backward pass still takes about twice as long as the forward pass.  The optimizer step time is unchanged, since it involves primarily elementwise operations and accumulations which still run using full precision rather than matrix multiplications which can take advantage of the mixed precision.
+
