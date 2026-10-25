@@ -201,3 +201,32 @@ We have:
 The runtimes are comparable for matrix multiplication and softmax, but the number of operations in each layer for matrix multiplication is about `4 * context_length * context_length * d_model` while the number of operations in each layer for softmax is about `5 * context_length * context_length * num_heads`.  Thus, the ratio of FLOPS for matrix multiplication to FLOPs for softmax is `4 * d_model / (5 * num_heads)` which is much greater than 1.  (For the `small` model the ratio is about 51.2 and for the `xl` model the ratio is about 64.)
 
 The reason for comparable runtimes despite many more matrix multiplication FLOPs is that matrix multiplication has much higher arithmetic intensity through data reuse; thus it is much more efficient on the GPU.  Softmax is less efficient, involving the launching of many different kernels and more frequent reading and writing from memory.
+
+### `mixed_precision_accumulation`
+#### Run the following code and comment on the accuracy of the results.
+```
+    s = torch.tensor(0,dtype=torch.float32)
+    for i in range(1000):
+        s += torch.tensor(0.01,dtype=torch.float32)
+    print(s)
+
+    s = torch.tensor(0,dtype=torch.float16)
+    for i in range(1000):
+        s += torch.tensor(0.01,dtype=torch.float16)
+    print(s)
+
+    s = torch.tensor(0,dtype=torch.float32)
+    for i in range(1000):
+        s += torch.tensor(0.01,dtype=torch.float16)
+    print(s)
+
+    s = torch.tensor(0,dtype=torch.float32)
+    for i in range(1000):
+        x = torch.tensor(0.01,dtype=torch.float16)
+        s += x.type(torch.float32)
+    print(s)
+```
+
+With infinite precision, the correct answer would be `10`.  The first block of code in FP32 gives `10.0001`, which is quite accurate.  The second block of code in FP16 gives `9.9531`, which is a significant loss in accuracy.  The third and fourth blocks of code evaluate 0.01 in FP16 but accumulate in FP32, and both yield an answer of `10.0021`, which is much closer to the correct answer and to the answer obtained fully using FP32.
+
+This is because although there is some error in evaluating `0.01` in FP16 (the value is actually `0.01000213623046875`), there is no additional error introduced in accumulation when the accumulation is done in FP32.  In contrast, accumulating in FP16 causes rounding error at every step of the accumulation.
