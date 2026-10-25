@@ -157,7 +157,7 @@ Some other kernels besides matrix multiplies that account for non-trivial CUDA r
 - `void at::native::elementwise_kernel<(int)128, (int)2, void at::native::gpu_kernel_impl_nocast<at::native::<unnamed>::where_kernel_impl(at::TensorIterator &)::[lambda() (instance 1)]::operator ()() const::[lambda() (instance 11)]::operator ()() const::[lambda(bool, float, float) (instance 1)]>(at::TensorIteratorBase &, const T1 &)::[lambda(int) (instance 1)]>(int, T3)`
 - `void at::native::elementwise_kernel<(int)128, (int)2, void at::native::gpu_kernel_impl_nocast<at::native::CUDAFunctor_add<float>>(at::TensorIteratorBase &, const T1 &)::[lambda(int) (instance 1)]>(int, T3)`
 
-These are elementwise operations: the first is for elementwise divsion, the second is for `torch.where` used in masking, and the third is for elementwise addition.  These elementwise kernels account for a larger percentage of the runtime in the `small` model compared to the `xl` model.
+These are elementwise operations: the first is for elementwise division, the second is for `torch.where` used in masking, and the third is for elementwise addition.  These elementwise kernels account for a larger percentage of the runtime in the `small` model compared to the `xl` model.
 
 #### (d) Profile running one complete training step with your implementation of AdamW (i.e., the forward pass, computing the loss and running a backward pass, and finally an optimizer step, as you'd do during training). How does the fraction of time spent on matrix multiplication change, compared to doing inference (forward pass only)? How about other kernels?
 
