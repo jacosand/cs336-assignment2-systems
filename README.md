@@ -289,7 +289,7 @@ All memory profiling was done with `batch_size = 2` to avoid running out of memo
 
 ![Memory timeline for xl model forward pass using context_length = 2048 and full precision](img/memory-profile_xl_context-length-2048_forward_full-precision.png)
 
-The allocations prior to the start of profiling correspond to the parameters (which are already allocated during model construction before the warm-up steps).  As the forward pass proceeds, the memory allocated for computing the allocations quickly grows and then decays as the computations are finished.  The tensors needed for a backward pass are not retained because the inference-only path is run with `torch.set_grad_enabled(False)`.
+The allocations prior to the start of profiling correspond to the parameters (which are already allocated during model construction before the warm-up steps).  As the forward pass proceeds, the memory allocated for computing the activations quickly grows and then decays as the computations are finished.  The tensors needed for a backward pass are not retained because the inference-only path is run with `torch.set_grad_enabled(False)`.
 
 Here is the memory timeline for `context_length = 2048` in full precision doing the full training step (forward pass, backward pass, and optimizer step).
 
