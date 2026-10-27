@@ -176,9 +176,10 @@ def benchmark(config: BenchmarkConfig) -> dict[str, str | int | float]:
 
         t0 = timeit.default_timer()
 
-        with autocast_context_manager:
-            logits = transformer_lm(x)
-            loss = nn_utils.cross_entropy(logits, y)
+        with torch.set_grad_enabled(config.benchmark_up_to != "forward"):
+            with autocast_context_manager:
+                logits = transformer_lm(x)
+                loss = nn_utils.cross_entropy(logits, y)
 
         synchronize(device)
 

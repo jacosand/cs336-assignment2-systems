@@ -281,3 +281,28 @@ The requested timings are as follows:
 
 Using mixed precision yields faster forward and backward passes compared to using full precision, and the speedup increases as the model size increases.  In all cases, the backward pass still takes about twice as long as the forward pass.  The optimizer step time is unchanged, since it involves primarily elementwise operations and accumulations which still run using full precision rather than matrix multiplications which can take advantage of the mixed precision.
 
+### `memory_profiling`
+
+#### (a) Profile your complete training step of forward pass, backward pass, and optimizer step of the xl model from Table 1 with context lengths of 128 and 2048.  Then, run your script to get a memory profile of the xl model when either doing inference only (just forward pass) or a full training step. What do your memory timelines look like? Can you tell which stage is running based on the peaks you see?
+
+All memory profiling was done with `batch_size = 2` to avoid running out of memory on the B200 GPU.  Here is the memory timeline for `context_length = 2048` in full precision doing inference only (just forward pass).
+
+![Memory timeline for xl model forward pass using context_length = 2048 and full precision](img/memory-profile_xl_context-length-2048_forward_full-precision.png)
+
+The allocations prior to the start of profiling correspond to the parameters (which are already allocated during model construction before the warm-up steps).  As the forward pass proceeds, the memory allocated for computing the allocations quickly grows and then decays as the computations are finished.  The tensors needed for a backward pass are not retained because the inference-only path is run with `torch.set_grad_enabled(False)`.
+
+Here is the memory timeline for `context_length = 2048` in full precision doing the full training step (forward pass, backward pass, and optimizer step).
+
+![Memory timeline for xl model full training step using context_length = 2048 and full precision](img/memory-profile_xl_context-length-2048_optimizer_full-precision.png)
+
+The allocations prior to the start of profiling correspond to the parameters and their first and second moments (from AdamW).  These are already allocated before profiling starts.  As the forward pass proceeds, memory is allocated to the activations and these activations are kept in memory until they are used in the backward pass.  Thus, the forward pass memory starts to be freed during the backward pass, but the gradients are then stored.  By the end of the backward pass, profile flattens and the parameters, first and second moments, and gradients are stored in memory.  During AdamW, the total amount of memory remains roughly unchanged, but we see freeing and allocation that corresponds to the updating of the first and second moments of the parameters.  After AdamW is complete, the gradients are freed when `zero_grad` is called.
+
+#### (b) What is the peak memory usage of each context length when doing a forward pass? What about when doing a full training step?
+
+#### (c) Find the peak memory usage of the xl model when using mixed-precision, for both a forward pass and a full training step. Does mixed-precision significantly affect memory usage?
+
+#### (d) Consider the xl model. Given our reference hyperparameters, what is the size of a tensor of activations in the Transformer residual stream, in single-precision? Give this size in MiB (i.e., divide the number of bytes by 1024**2).
+
+#### (e) Now look closely at the "Active Memory Timeline" from pytorch.org/memory_viz of a memory snapshot of the xl model doing a forward pass. When you reduce the "Detail" level, the tool hides the smallest allocations to the corresponding level (e.g., putting "Detail" at 10% only shows the 10% largest allocations). What is the size of the largest allocations shown? Looking through the stack trace, can you tell where those allocations come from?
+
+#### (f) Nsight Systems also has flags for memory profiling. You can combine these with the Nsight flags from before to understand what allocations are happening at different steps in your model's lifespan. Use the PyTorch-provided NVTX labels to determine how much memory is saved for backward (these tensors are often called residuals) by a single TransformerBlock in your model. Note the 5 largest contributing operations, and what percentage of the overall memory they contribute. During the backward pass, all these tensors will be freed, but new gradient tensors are emitted at the same time. Based on your profiles showing how much memory was allocated during the forward pass, and how much memory usage changes for every TransformerBlock in the backward pass, calculate how much memory the produced gradient tensors for a TransformerBlock take. Does the result match what you expect?
