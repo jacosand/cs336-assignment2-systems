@@ -4,6 +4,7 @@ import modal
 
 (DATA_PATH := Path("data")).mkdir(exist_ok=True)
 (PROFILE_PATH := DATA_PATH / "profiles").mkdir(exist_ok=True)
+(MEMORY_PROFILE_PATH := DATA_PATH / "memory_profiles").mkdir(exist_ok=True)
 
 NSYS_URL = "https://developer.nvidia.com/downloads/assets/tools/secure/nsight-systems/2026_5/nsightsystems-linux-cli-public-2026.5.1.161-3889610.deb"
 

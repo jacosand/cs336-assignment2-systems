@@ -32,6 +32,7 @@ def parse_args(arglist: tuple[str, ...] | list[str] | None = None) -> BenchmarkC
     parser.add_argument("--benchmark-up-to", type=str, choices=["forward", "backward", "optimizer"], default=defaults.benchmark_up_to)
     parser.add_argument("--nsys-profile", type=str, choices=["yes", "no"], default=defaults.nsys_profile)
     parser.add_argument("--mixed-precision", type=str, choices=["yes", "no"], default=defaults.mixed_precision)
+    parser.add_argument("--memory-profile", type=str, choices=["yes", "no"], default=defaults.memory_profile)
 
     args = parser.parse_args(args = arglist)
 

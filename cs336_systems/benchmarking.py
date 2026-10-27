@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from dataclasses import dataclass, asdict
 from cs336_basics import model, optimizer, nn_utils
-from cs336_systems.modal_utils import VOLUME_MOUNTS, app, build_image, secrets
+from cs336_systems.modal_utils import VOLUME_MOUNTS, MEMORY_PROFILE_PATH, app, build_image, secrets
 import torch.cuda.nvtx as nvtx
 import math
 from einops import einsum
@@ -65,6 +65,7 @@ class BenchmarkConfig:
     benchmark_up_to: str = "optimizer"
     nsys_profile: str = "no"
     mixed_precision: str = "no"
+    memory_profile: str = "no"
 
     rope_theta: float = 10_000
     beta1: float = 0.9
@@ -215,6 +216,9 @@ def benchmark(config: BenchmarkConfig) -> dict[str, str | int | float]:
     for step in range(config.num_warmup_steps):
         run_step()
 
+    if config.memory_profile == "yes":
+        torch.cuda.memory._record_memory_history(max_entries=1000000)
+
     with measurement_context_manager:
         for step in range(config.num_measurement_steps):
             forward_time, backward_time, optimizer_time = run_step()
@@ -224,6 +228,17 @@ def benchmark(config: BenchmarkConfig) -> dict[str, str | int | float]:
                 backward_times.append(backward_time)
             if config.benchmark_up_to == "optimizer":
                 optimizer_times.append(optimizer_time)
+
+    if config.memory_profile == "yes":
+        memory_profile_file = (
+            f"model-size-{config.model_size}_"
+            f"context-length-{config.context_length}_"
+            f"mixed-precision-{config.mixed_precision}_"
+            f"benchmark-up-to-{config.benchmark_up_to}.pickle"
+        )
+        memory_profile_path = "/root" / MEMORY_PROFILE_PATH / memory_profile_file
+        torch.cuda.memory._dump_snapshot(memory_profile_path)
+        torch.cuda.memory._record_memory_history(enabled=None)
 
     return {
         **asdict(config),
