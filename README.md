@@ -341,7 +341,7 @@ For `context_length = 2048` using full precision, the largest activations are 1.
 
 ### `gradient_checkpointing`
 
-#### (a) What checkpointing strategy minimizes peak activation memory, ignoring the compute cost? Describe how you would arrange the checkpoint calls (a code sketch is fine), and give the asymptotic peak activation memory and compute of your strategy as a function of N. Assume the residuals saved by a single block dominate any per-checkpoint bookkeeping.
+#### (a) What checkpointing strategy minimizes peak activation memory, ignoring the compute cost? Describe how you would arrange the `checkpoint` calls (a code sketch is fine), and give the asymptotic peak activation memory and compute of your strategy as a function of N. Assume the residuals saved by a single block dominate any per-checkpoint bookkeeping.
 
 To minimize peak activation memory, you recursively divide the N blocks into two approximately equally-sized sequences and checkpoint each sequence, and continue until each sequence consists of a single block.  During the backward pass, you recompute each sequence recursively, releasing its tensors as soon as the corresponding backward pass finishes.
 
@@ -367,4 +367,5 @@ The peak activation memory is `O(log N)`, since the recursion is `log N` levels 
 
 The backpropagation phase satisfies the recursion `T(N) = 2 * T(N/2) + O(N)`, whose solution is `O(N * log N)`.
 
-#### (b) Consider the xl model config with batch size 4 and sequence length 2048 as above. If you only have the time/compute budget to run one step of recomputation (meaning you may not nest checkpoint calls), what is the best checkpointing strategy to reduce peak memory? Profile your run’s peak memory to validate your hypothesis. Compare the peak memory of the next smaller and larger checkpointing block sizes to be sure.
+#### (b) Consider the `xl` model config with batch size 4 and sequence length 2048 as above. If you only have the time/compute budget to run one step of recomputation (meaning you may not nest `checkpoint` calls), what is the best checkpointing strategy to reduce peak memory? Profile your run's peak memory to validate your hypothesis. Compare the peak memory of the next smaller and larger checkpointing block sizes to be sure.
+
