@@ -299,10 +299,72 @@ The allocations prior to the start of profiling correspond to the parameters and
 
 #### (b) What is the peak memory usage of each context length when doing a forward pass? What about when doing a full training step?
 
+The peak memory usages in full precision are as follows:
+
+| model_size   |    context_length | mode               |   peak_memory_GiB |
+|:-------------|------------------:|:-------------------|------------------:|
+| xl           |               128 | forward pass       |              12.7 |
+| xl           |               128 | full training step |              51.3 |
+| xl           |              2048 | forward pass       |              16.9 |
+| xl           |              2048 | full training step |             143.4 |
+
 #### (c) Find the peak memory usage of the xl model when using mixed-precision, for both a forward pass and a full training step. Does mixed-precision significantly affect memory usage?
+
+The peak memory usages in mixed precision are as follows:
+
+| model_size   |    context_length | mode               |   peak_memory_GiB |
+|:-------------|------------------:|:-------------------|------------------:|
+| xl           |               128 | forward pass       |              19.0 |
+| xl           |               128 | full training step |              51.3 |
+| xl           |              2048 | forward pass       |              22.0 |
+| xl           |              2048 | full training step |             120.0 |
+
+Yes, mixed precision does significantly affect memory usage.  In the forward pass (inference only), mixed precision actually increases memory usage because it creates BF16 cached copies of eligible FP32 matrices for matrix multiplications.  In the full training step, with a short context length of 128, the FP32 parameters, gradients, and AdamW moments dominate over any additional BF16 cached copies, so the total memory usage is approximately the same.  At a long context length of 2048, the memory savings start to become significant in mixed precision because some intermediate activations are only stored in BF16, instead of FP32.
 
 #### (d) Consider the xl model. Given our reference hyperparameters, what is the size of a tensor of activations in the Transformer residual stream, in single-precision? Give this size in MiB (i.e., divide the number of bytes by 1024**2).
 
+A tensor of activations in single precision has a memory size in MiB oif `4 * batch_size * sequence_length * d_model / 1024**2`, where `d_model = 2560` for the `xl` model.  Thus, we have the following values:
+
+| batch_size   |    context_length |    memory_MiB |
+|-------------:|------------------:|--------------:|
+|            2 |               128 |           2.5 |
+|            2 |              2048 |          40.0 |
+|            4 |               128 |           5.0 |
+|            4 |              2048 |          80.0 |
+
 #### (e) Now look closely at the "Active Memory Timeline" from pytorch.org/memory_viz of a memory snapshot of the xl model doing a forward pass. When you reduce the "Detail" level, the tool hides the smallest allocations to the corresponding level (e.g., putting "Detail" at 10% only shows the 10% largest allocations). What is the size of the largest allocations shown? Looking through the stack trace, can you tell where those allocations come from?
 
-#### (f) Nsight Systems also has flags for memory profiling. You can combine these with the Nsight flags from before to understand what allocations are happening at different steps in your model's lifespan. Use the PyTorch-provided NVTX labels to determine how much memory is saved for backward (these tensors are often called residuals) by a single TransformerBlock in your model. Note the 5 largest contributing operations, and what percentage of the overall memory they contribute. During the backward pass, all these tensors will be freed, but new gradient tensors are emitted at the same time. Based on your profiles showing how much memory was allocated during the forward pass, and how much memory usage changes for every TransformerBlock in the backward pass, calculate how much memory the produced gradient tensors for a TransformerBlock take. Does the result match what you expect?
+For `context_length = 2048` using full precision, the largest activations are 1.0 GiB.  From the stack traces, these come from the matrices inside the attention mechanism (attention scores, possibly masked, possibly passed through softmax).  The size of these matrices in GiB is:
+`4 * batch_size * num_heads * context_length ** 2 / 1024 ** 3` or `4 * 2 * 32 * 2048 ** 2 / 1024 ** 3 = 1.0 GiB`.
+
+#### (f) Nsight Systems also has flags for memory profiling. You can combine these with the Nsight flags from before to understand what allocations are happening at different steps in your model's lifespan. Use the PyTorch-provided NVTX labels to determine how much memory is saved for backward (these tensors are often called residuals) by a single `TransformerBlock` in your model. Note the 5 largest contributing operations, and what percentage of the overall memory they contribute. During the backward pass, all these tensors will be freed, but new gradient tensors are emitted at the same time. Based on your profiles showing how much memory was allocated during the forward pass, and how much memory usage changes for every `TransformerBlock` in the backward pass, calculate how much memory the produced gradient tensors for a TransformerBlock take. Does the result match what you expect?
+
+### `gradient_checkpointing`
+
+#### (a) What checkpointing strategy minimizes peak activation memory, ignoring the compute cost? Describe how you would arrange the checkpoint calls (a code sketch is fine), and give the asymptotic peak activation memory and compute of your strategy as a function of N. Assume the residuals saved by a single block dominate any per-checkpoint bookkeeping.
+
+To minimize peak activation memory, you recursively divide the N blocks into two approximately equally-sized sequences and checkpoint each sequence, and continue until each sequence consists of a single block.  During the backward pass, you recompute each sequence recursively, releasing its tensors as soon as the corresponding backward pass finishes.
+
+Pseudocode looks as follows:
+```
+def run_group(x, blocks):
+  if len(blocks) == 1:
+    return blocks[0](x)
+
+  mid = len(blocks) // 2
+
+  left_blocks = blocks[:mid]
+  right_blocks = blocks[mid:]
+
+  x = checkpoint(lambda z: run_group(z, left_blocks), x)
+  x = checkpoint(lambda z: run_group(z, right_blocks), x)
+  return x
+
+output = checkpoint(lambda z: run_group(z, blocks), x)
+```
+
+The peak activation memory is `O(log N)`, since the recursion is `log N` levels deep and you have to keep `log N` saved checkpoints in memory at the same time.  (You also have to keep one set of residuals in memory at a time, for the layer you are currently backpropagating through.)
+
+The backpropagation phase satisfies the recursion `T(N) = 2 * T(N/2) + O(N)`, whose solution is `O(N * log N)`.
+
+#### (b) Consider the xl model config with batch size 4 and sequence length 2048 as above. If you only have the time/compute budget to run one step of recomputation (meaning you may not nest checkpoint calls), what is the best checkpointing strategy to reduce peak memory? Profile your run’s peak memory to validate your hypothesis. Compare the peak memory of the next smaller and larger checkpointing block sizes to be sure.
